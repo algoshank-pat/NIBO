@@ -1,0 +1,13 @@
+langchain
+langgraph
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+pypdf
+pypdfium2
+python-multipart
+reportlab
+pytest
+httpx
+pillow
