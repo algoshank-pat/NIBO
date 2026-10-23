@@ -1,12 +1,13 @@
 """Application Completeness Agent (NIBO) - LangGraph state machine.
 
-load_documents -> classify_documents -> retrieve_rules -> analyze -> propose_status -> build_proposal
+load_documents -> classify_documents -> retrieve_rules -> analyze -> propose_status -> resolve_gaps -> build_proposal
 
 The agent only PROPOSES a status. It never approves, sends letters or changes the
 application record; that happens after an underwriter decision (Day 3).
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import io
@@ -22,9 +23,10 @@ from pypdf.errors import PdfReadError
 import database as db
 from config import settings
 from letters import letter_text
+from gap_resolver import GapResolver
 from extractors import ExtractionError, MockExtractor, OllamaExtractor, get_extractor
 from models import (
-    AnalysisState, ApplicationRequest, CompletionProposal, DocumentInput, DocumentType,
+    AnalysisState, EnhancedAnalysisState, ApplicationRequest, CompletionProposal, DocumentInput, DocumentType,
     EvidenceSnapshot, ExtractedDocumentSnapshot, Issue, IssueDetail, LoadedDocument, Proposal,
 )
 from rules import DEFAULT_PRODUCT, run_rules
@@ -134,11 +136,48 @@ def make_nodes(extractor):
         return {"proposal": proposal,
                 "trace": _log(state, f"propose_status: {proposal.status} @ {proposal.confidence:.2f}")}
 
-    def build_proposal(state: AnalysisState) -> dict:
+    def resolve_gaps(state: EnhancedAnalysisState) -> dict:
+        if not settings.gap_resolution_enabled:
+            return {"trace": _log(state, "resolve_gaps: disabled")}
+        resolver = GapResolver(settings, context=state.resolution_context, as_of=state.as_of)
+        # Invoke the async batch from a worker, including callers already running an event loop.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            resolutions = pool.submit(lambda: asyncio.run(resolver.batch_resolve(
+                state.issues_found, state.extracted_text, state.documents))).result()
+        fetched = [r.fetched_document for r in resolutions.values() if r.resolved and r.fetched_document]
+        documents = [*fetched, *state.documents]
+        issues = run_rules(state.rules_applied, documents, state.as_of)
+        for result in resolutions.values():
+            if result.resolved and any(i.rule == result.original_issue.rule for i in issues):
+                result.resolved, result.status, result.resolution_method = False, "pending", "manual_request"
+                result.trace.append("Final rule pass did not confirm resolution; underwriter review required")
+        fetched = [r.fetched_document for r in resolutions.values() if r.resolved and r.fetched_document]
+        documents = [*fetched, *state.documents]
+        issues = run_rules(state.rules_applied, documents, state.as_of)
+        extracted_text = dict(state.extracted_text)
+        for document in fetched:
+            key = document.doc_type.value
+            extracted_text[key] = document.text + "\n" + extracted_text.get(key, "")
+        working = state.model_copy(update={"documents": documents, "issues_found": issues})
+        proposal = compute_proposal(working)
+        resolved = sum(r.resolved for r in resolutions.values())
+        pending = sum(r.status == "pending" for r in resolutions.values())
+        unresolvable = sum(r.status == "unresolvable" for r in resolutions.values())
+        if resolutions:
+            proposal.reasoning += f" Gap resolution: {resolved} resolved, {pending} pending, {unresolvable} unresolvable."
+            if any(r.resolved and r.simulated for r in resolutions.values()):
+                proposal.reasoning += " Simulation: fetched evidence is mock data."
+                proposal.requires_underwriter_judgment = True
+        return {"documents": documents, "extracted_text": extracted_text, "issues_found": issues, "proposal": proposal,
+                "gap_resolutions": resolutions, "resolved_issues_count": resolved,
+                "pending_issues_count": pending, "unresolvable_issues_count": unresolvable,
+                "trace": _log(state, f"resolve_gaps: {resolved}/{len(resolutions)} resolved; rules re-run")}
+
+    def build_proposal(state: EnhancedAnalysisState) -> dict:
         completion = assemble_completion(state, extractor)
         return {"completion": completion, "trace": _log(state, "build_proposal: done")}
 
-    return load_documents, classify_documents, retrieve_rules, analyze, propose_status, build_proposal
+    return load_documents, classify_documents, retrieve_rules, analyze, propose_status, resolve_gaps, build_proposal
 
 
 # --------------------------------------------------------------------------- decision logic
@@ -217,7 +256,7 @@ def build_letter(state: AnalysisState, proposal: Proposal) -> str:
                        [issue.message for issue in state.issues_found])
 
 
-def assemble_completion(state: AnalysisState, extractor) -> CompletionProposal:
+def assemble_completion(state: EnhancedAnalysisState, extractor) -> CompletionProposal:
     p = state.proposal
     issues = state.issues_found
     details = [
@@ -235,6 +274,12 @@ def assemble_completion(state: AnalysisState, extractor) -> CompletionProposal:
     else:
         summary = f"READY: all {len(state.rules_applied)} rules passed."
 
+    if state.gap_resolutions:
+        summary += (f" Gap resolution: {state.resolved_issues_count} resolved, "
+                    f"{state.pending_issues_count} pending, {state.unresolvable_issues_count} unresolvable.")
+        if any(r.resolved and r.simulated for r in state.gap_resolutions.values()):
+            summary += " Simulation: fetched evidence is mock data."
+
     snapshots: dict[str, ExtractedDocumentSnapshot] = {}
     for d in state.documents:
         ext = d.extraction
@@ -248,6 +293,10 @@ def assemble_completion(state: AnalysisState, extractor) -> CompletionProposal:
 
     return CompletionProposal(
         application_id=state.application_id,
+        gap_resolutions=state.gap_resolutions,
+        resolved_issues_count=state.resolved_issues_count,
+        pending_issues_count=state.pending_issues_count,
+        unresolvable_issues_count=state.unresolvable_issues_count,
         proposed_status=p.status,
         alternative_status=p.alternative_status,
         requires_underwriter_judgment=p.requires_underwriter_judgment,
@@ -271,7 +320,7 @@ def assemble_completion(state: AnalysisState, extractor) -> CompletionProposal:
 def build_graph(extractor=None):
     extractor = extractor or get_extractor()
     nodes = make_nodes(extractor)
-    g = StateGraph(AnalysisState)
+    g = StateGraph(EnhancedAnalysisState)
     names = []
     for fn in nodes:
         g.add_node(fn.__name__, fn)
@@ -285,18 +334,19 @@ def build_graph(extractor=None):
 
 def analyze_application(
     request: ApplicationRequest, *, extractor=None, as_of: date | None = None, persist: bool = True,
-) -> tuple[CompletionProposal, AnalysisState]:
+) -> tuple[CompletionProposal, EnhancedAnalysisState]:
     """Run the agent end to end. Persists the proposal + audit entry unless persist=False."""
     extractor = extractor or get_extractor()
     graph = build_graph(extractor)
-    initial = AnalysisState(
+    initial = EnhancedAnalysisState(
         application_id=request.application_id, policy_product=request.policy_product,
-        applicant_age=request.applicant_age, inputs=request.documents, as_of=as_of,
+        applicant_age=request.applicant_age, inputs=request.documents, as_of=as_of or date.today(),
+        resolution_context=request.resolution_context,
         agent_mode=extractor.mode,
     )
     result = graph.invoke(initial, config={"run_name": f"nibo-{request.application_id}",
                                            "metadata": {"run_id": uuid.uuid4().hex}})
-    state = AnalysisState.model_validate(result)
+    state = EnhancedAnalysisState.model_validate(result)
     if persist:
         db.save_proposal(state.completion, request.policy_product)
     return state.completion, state

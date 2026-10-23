@@ -32,7 +32,7 @@ Instructions for any coding agent (Codex, Claude Code, etc.) working in this fol
 ## Architecture (files)
 | File | Role |
 |---|---|
-| `agent.py` | LangGraph StateGraph: load_documents -> classify_documents -> retrieve_rules -> analyze -> propose_status -> build_proposal. `analyze_application()` is the entry point. |
+| `agent.py` | LangGraph StateGraph: load_documents -> classify_documents -> retrieve_rules -> analyze -> propose_status -> resolve_gaps -> build_proposal. `analyze_application()` is the entry point. |
 | `extractors.py` | `OllamaExtractor` (POST /api/chat, JSON-schema `format`, temperature 0, think false, Pydantic validation + 1 retry; vision OCR for scanned PDFs via pypdfium2) and `MockExtractor` (regex for sample PDFs). `get_extractor()` picks by `NIBO_LLM_MODE` (auto/ollama/mock). |
 | `rules.py` | 6 rules: required_fields, signature_present, date_consistency, medical_recency, beneficiary_designated, id_valid. Pure functions of extracted fields + `as_of` date. `run_rules()` dedupes missing-document issues. |
 | `models.py` | Pydantic models: ApplicationRequest, DocumentInput, DocumentExtraction (also the LLM output schema), LoadedDocument, RuleDefinition, Issue, Proposal, AnalysisState, CompletionProposal, AuditLog, UnderwriterDecision, SystemExecution. |
@@ -40,10 +40,11 @@ Instructions for any coding agent (Codex, Claude Code, etc.) working in this fol
 | `app.py` | FastAPI analysis, application view, audit and underwriter decision endpoints; serves the built React portal. |
 | `config.py` | pydantic-settings, env prefix `NIBO_` (e.g. NIBO_OLLAMA_MODEL, NIBO_LLM_MODE). |
 | `sample_applications.py` | Generates 3 sample packets as PDFs (dates relative to today) and runs them. APP_1001 NIBO (blank beneficiary), APP_1002 READY, APP_1003 edge (warning only -> NIBO alt READY, plus an unreadable scan). |
+| `gap_resolver.py`, `integrations/` | Bounded tool routing; mock DMV identity verification + unchanged-rule rechecks; medical/manual fallback; provider timeouts. Real DMV contract not connected. |
 | `letters.py` | Shared deterministic stored-letter text; never sends messages. |
 | `frontend.jsx`, `style.css`, `index.html`, `vite.config.js` | React portal in this same project; npm build emits `dist/` for FastAPI. |
 | `benchmark.py`, `PERFORMANCE.md` | Local synthetic-packet benchmark and measured results/limitations. |
-| `tests/` | 80 tests: rules, database, agent+API (mock mode), Ollama extractor (mocked HTTP). |
+| `tests/` | 114 tests: rules, database, agent+API (mock mode), Ollama extractor (mocked HTTP). |
 
 ## Locked decisions (from the owner)
 - Severity mapping: rule error -> critical, warning -> major, agent-uncertain -> minor.
@@ -57,3 +58,12 @@ Instructions for any coding agent (Codex, Claude Code, etc.) working in this fol
 - Match existing style: type hints, `from __future__ import annotations`, small pure functions,
   section-divider comments, sparse docstrings. Keep the rules engine deterministic.
 - Write files as UTF-8 (Windows default cp1252 breaks on non-ASCII characters).
+
+## Gap resolver scope approved October 23, 2026
+- The owner approved all implementation files for the gap resolver. Do not commit or push this
+  extension until the owner separately approves; this overrides the earlier general Git approval.
+- Keep `rules.py`, the six rules, and underwriter approval flow unchanged.
+- DMV mocks need explicit fixture records and issuing-state/license context; never invent matches.
+- Medical provider results remain mock-only and do not resolve medical gaps. Manual requests are
+  recorded, never sent. No real provider credentials or endpoint integration has been verified.
+- Resolution attempts are preserved in the persisted proposal's append-only audit snapshot.

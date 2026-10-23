@@ -91,7 +91,7 @@ identity-provider integration.
 
 ## Extraction, rules, and evidence
 
-`load_documents → classify_documents → retrieve_rules → analyze → propose_status → build_proposal`
+`load_documents → classify_documents → retrieve_rules → analyze → propose_status → resolve_gaps → build_proposal`
 
 Only open-weights models served by local Ollama read/classify/extract documents. No hosted LLM
 API is used. Scanned PDFs are rendered with pypdfium2 and transcribed by the vision model.
@@ -122,9 +122,81 @@ npm run build
 
 Tests are model-free (mock extractor / mocked Ollama HTTP), covering extraction, evidence,
 rules, API, database migration, human decisions, concurrency, rollback, and stored letters.
-The current suite has 80 tests. See `PERFORMANCE.md` for live model measurements, benchmark commands,
+The current suite has 114 tests. See `PERFORMANCE.md` for live model measurements, benchmark commands,
 and the remaining latency gap.
 Git setup and push to `https://github.com/algoshank-pat/NIBO` are authorized; deployment remains
 prohibited. `.gitignore` excludes local databases, PDF packets, raw benchmark logs, environments,
 dependencies and build output. Generate samples and build the portal after cloning; the raw timing
 logs referenced in `PERFORMANCE.md` remain local. See `AGENTS.md`.
+
+
+## Gap resolution extension (October 23, 2026)
+
+After the initial status proposal, a seventh LangGraph node chooses a tool route for each gap,
+executes bounded parallel attempts, and re-runs the unchanged rules before building the final proposal.
+Routing is deterministic by rule/document type; this is a bounded agentic workflow, not an LLM planner.
+The model does not make completeness or approval decisions.
+
+- **Driver's license gaps:** try a DMV lookup only when an actual license number, issuing state,
+  and applicant name are available. The fetched state, license number and name must match. A valid,
+  unsuspended record must also pass the existing `id_valid` rule at the analysis date. The resolver
+  cannot renew a license: an expired provider record leaves the gap pending.
+- **Medical gaps:** the connector returns synthetic example data only. Medical findings remain
+  pending manual requests, including missing medical records reported by another rule.
+- **Other known gaps:** record a manual request; no email or external message is sent.
+- **Unknown rule:** mark unresolvable for underwriter review.
+- Provider errors, malformed responses, identity conflicts and timeouts fall back to manual handling.
+
+DMV **mock mode is the default**, with no fixture records. It does not silently validate arbitrary
+IDs. Successful mock resolutions are explicitly labelled as simulation and require underwriter
+judgment. The generic HTTP adapter is only a contract placeholder (`POST /licenses/verify` over
+HTTPS), tested with mocked HTTP. No real state DMV endpoint, access credentials or provider contract
+has been integrated or verified. Do not claim a real DMV integration or an 80% auto-resolution rate.
+
+`POST /analyze` accepts optional lookup context, separate from PDF-extracted facts:
+
+```json
+"resolution_context": {
+  "applicant_state": "CA",
+  "driver_license_number": "THE_ACTUAL_LICENSE_NUMBER",
+  "applicant_id": "OPTIONAL_MEDICAL_SUBJECT_ID",
+  "provider_npi": "OPTIONAL_PROVIDER_ID"
+}
+```
+
+The license number can be omitted from context if extracted from the uploaded driver's license.
+Issuing state must be supplied; it is not guessed from the applicant's address or the issue's field
+name. The current upload form does not collect this extra context; use the API for a DMV demo.
+
+Configure synthetic fixture data with `NIBO_GAP_DMV_RECORDS` as a JSON object keyed by
+`STATE:LICENSE_NUMBER`. Each record needs `state`, `driver_license_number`, `full_name`, boolean
+`valid`, and ISO `expiration_date`. Optional fields: integer `violations` and boolean `suspensions`.
+Fixtures must match the test applicant exactly. Example fixture shape (not an installed record):
+
+```json
+{"CA:DEMO123":{"state":"CA","driver_license_number":"DEMO123","full_name":"Demo Applicant","valid":true,"expiration_date":"2035-01-01","violations":0,"suspensions":false}}
+```
+
+`NIBO_GAP_RESOLUTION_ENABLED=false` disables attempts. Other settings are listed in `.env.example`:
+per-attempt timeout defaults to 10 seconds, batch deadline to 30 seconds, and parallelism to four.
+The original PDFs/extractions are preserved. Verified API evidence is prepended as a separately
+identified source; unverified candidates are excluded from the active rule inputs.
+
+Responses add `gap_resolutions`, `resolved_issues_count`, `pending_issues_count`, and
+`unresolvable_issues_count`. Each resolution includes the original issue, method/status, timestamp,
+confidence, trace, returned data/evidence and simulation indicator. Counts appear in the existing
+portal summary; full attempts are visible in its audit record details. The final proposal and all
+attempt records are serialized into the existing append-only `agent_proposal` audit snapshot when
+analysis is persisted, rather than introducing new database tables or standalone audit event types.
+Application status stays `PROPOSED` until the unchanged underwriter decision flow executes.
+
+Run the focused PDF-to-resolution demonstration without Ollama, keys or real provider calls:
+
+```powershell
+.venv/Scripts/python -m pytest -q tests/test_gap_resolver.py::test_full_pdf_to_verified_proposal_and_append_only_audit
+.venv/Scripts/python -m pytest -q tests/test_gap_resolver.py
+```
+
+The integration test creates synthetic PDFs in a temporary directory, starts with an expired ID,
+retrieves an explicitly configured mock DMV record, verifies it with the deterministic rules,
+proposes READY, and checks the persisted proposal/audit while status remains PROPOSED.

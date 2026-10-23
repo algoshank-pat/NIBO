@@ -84,3 +84,35 @@ Never send letters/email or deploy. Git setup, commits and push to the owner-spe
 repository are now authorized; keep generated/local data excluded with `.gitignore`. Do not create
 another hosted repository without an explicit request. Deployment hosting and the five-second
 latency target remain owner-level follow-up decisions.
+
+
+## Gap resolver extension — October 23, 2026
+
+The owner supplied `GAP_RESOLVER.md` and approved all implementation files. The new scope forbids
+committing/pushing until separately approved. This takes precedence over the earlier Git authorization.
+
+Implemented a seventh `resolve_gaps` node after `propose_status`, Pydantic resolution/context/state
+models, a mockable DMV provider adapter and mock-only medical connector. The existing rules, API
+handler, database schema and underwriter decision logic are unchanged. `config.py` and `.env.example`
+add bounded timeouts, parallelism, enabled/mock modes, explicit mock records and a placeholder URL.
+
+Default DMV fixtures are empty and no issuing state is guessed. Pass optional `resolution_context`
+to the analysis API; the current upload UI does not collect these identifiers. For a positive demo,
+use an explicit matching synthetic DMV fixture or run the focused integration test in README.
+Fetched identity must match the state, actual license number and applicant name; provider validity
+alone cannot resolve a gap. Both the resolver and final node verify the unchanged deterministic rules.
+Original documents remain in the audit evidence; verified provider evidence is a separate active source.
+
+Medical gaps stay pending even if the mock supplies data. Errors/timeouts/invalid/expired/mismatched
+records fall back to manual requests, and no messages are sent. Unknown rules are unresolvable.
+Per-attempt timeout is 10 seconds; batch deadline 30 seconds; concurrent attempts are capped at four.
+
+Resolution counts/statuses appear in the existing summary, and full traces/results are embedded in
+the persisted proposal audit snapshot (not separate event rows). Mock successes are visibly labelled
+simulation and require underwriter judgment. Final application status is still PROPOSED pending a human.
+
+Validation: 114 model-free tests, including duplicate gaps, actual-ID lookup, invalid/expired data,
+identity conflicts, parallel execution, cancellation/deadlines, HTTP MockTransport, PDF-to-READY
+simulation, API audit persistence and unchanged approval, disabling, and async-caller compatibility.
+No real DMV/EHR integration, provider keys, live lookup, or 80% real-world resolution rate is claimed.
+The earlier five-second inference performance gap remains unchanged.

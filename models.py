@@ -49,9 +49,17 @@ class DocumentInput(BaseModel):
         return self
 
 
+class GapResolutionContext(BaseModel):
+    applicant_state: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
+    driver_license_number: str | None = Field(default=None, min_length=1, pattern=r"\S")
+    applicant_id: str | None = None
+    provider_npi: str | None = None
+
+
 class ApplicationRequest(BaseModel):
     application_id: str = Field(min_length=1)
     documents: list[DocumentInput]
+    resolution_context: GapResolutionContext = Field(default_factory=GapResolutionContext)
     policy_product: str = "TermLife_10yr"
     applicant_age: int | None = None
 
@@ -119,7 +127,7 @@ class LoadedDocument(BaseModel):
     pages: list[str] = Field(default_factory=list)
     readable: bool = True
     error: str | None = None
-    text_source: Literal["pypdf", "vision_ocr", "none"] = "pypdf"
+    text_source: Literal["pypdf", "vision_ocr", "api", "none"] = "pypdf"
     extraction: DocumentExtraction | None = None
 
     @property
@@ -157,6 +165,30 @@ class Issue(BaseModel):
     uncertain: bool = Field(default=False, description="Agent could not read/extract reliably")
 
 
+class GapResolution(BaseModel):
+    gap_id: str
+    original_issue: Issue
+    resolved: bool = False
+    status: Literal["resolved", "pending", "unresolvable"] = "pending"
+    resolution_method: Literal["auto_fetch", "manual_request", "unresolvable"]
+    fetched_data: dict | None = None
+    fetched_document: LoadedDocument | None = None
+    confidence: float = Field(ge=0, le=1)
+    timestamp: datetime = Field(default_factory=utcnow)
+    trace: list[str] = Field(default_factory=list)
+    error_message: str | None = None
+    simulated: bool = False
+
+    @model_validator(mode="after")
+    def _consistent_result(self) -> "GapResolution":
+        if self.resolved != (self.status == "resolved"):
+            raise ValueError("Resolved flag and status must agree")
+        if self.resolved and (self.resolution_method != "auto_fetch" or
+                              self.fetched_document is None or self.fetched_data is None):
+            raise ValueError("Resolved gaps require fetched evidence")
+        return self
+
+
 class Proposal(BaseModel):
     status: Status
     confidence: float
@@ -186,6 +218,14 @@ class AnalysisState(BaseModel):
 
     agent_mode: Literal["ollama", "mock"] = "mock"
     trace: list[str] = Field(default_factory=list)
+
+
+class EnhancedAnalysisState(AnalysisState):
+    resolution_context: GapResolutionContext = Field(default_factory=GapResolutionContext)
+    gap_resolutions: dict[str, GapResolution] = Field(default_factory=dict)
+    resolved_issues_count: int = 0
+    pending_issues_count: int = 0
+    unresolvable_issues_count: int = 0
 
 
 # --------------------------------------------------------------------------- output
@@ -232,6 +272,10 @@ class CompletionProposal(BaseModel):
     recommended_letter_text: str
     agent_mode: Literal["ollama", "mock"]
     model: str | None = None
+    gap_resolutions: dict[str, GapResolution] = Field(default_factory=dict)
+    resolved_issues_count: int = 0
+    pending_issues_count: int = 0
+    unresolvable_issues_count: int = 0
 
 
 # --------------------------------------------------------------------------- audit
@@ -287,3 +331,4 @@ class AuditLog(BaseModel):
 
 
 AnalysisState.model_rebuild()
+EnhancedAnalysisState.model_rebuild()

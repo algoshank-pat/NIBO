@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     # "ollama" = always Ollama (fail per document if unreachable). "mock" = never call a model.
     llm_mode: str = "auto"
 
+    gap_resolution_enabled: bool = True
+    gap_dmv_mock_mode: bool = True
+    gap_dmv_records: dict[str, dict] = Field(default_factory=dict)
+    gap_dmv_base_url: str | None = None
+    gap_timeout_s: float = Field(default=10, gt=0, le=30)
+    gap_batch_timeout_s: float = Field(default=30, gt=0, le=30)
+    gap_parallelism: int = Field(default=4, ge=1, le=8)
+
     database_path: Path = BASE_DIR / "nibo.db"
     rules_version: str = "1.0.0"
     medical_recency_years: int = 3
