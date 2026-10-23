@@ -1,5 +1,8 @@
 # Continue the NIBO agent — October 21, 2026
 
+> **Latest status: read "Claude session handoff — October 23, 2026 (latest)" at the end of this
+> file first.** It supersedes older sections where they conflict.
+
 Work only in `C:\Maven\Projects\Week3\completeness-agent`. Read `AGENTS.md`, `README.md`, and the
 product design `nibo-agent-design.md` first (the original also exists one folder above locally). Use `.venv/Scripts/python`; keep the existing app.
 
@@ -116,3 +119,104 @@ identity conflicts, parallel execution, cancellation/deadlines, HTTP MockTranspo
 simulation, API audit persistence and unchanged approval, disabling, and async-caller compatibility.
 No real DMV/EHR integration, provider keys, live lookup, or 80% real-world resolution rate is claimed.
 The earlier five-second inference performance gap remains unchanged.
+
+
+## Claude session handoff — October 23, 2026 (latest)
+
+Written by Claude (claude.ai session) for Codex to take over. Claude had file access to this folder
+but **no shell on the owner's PC**: nothing below was run on Windows, built with npm, or committed.
+
+### Owner direction this session
+- Screens must speak business language for an underwriter, not developer/database terms.
+- The review screen is the underwriter's dashboard and must lead with **what is missing**.
+- The audit trail must show visually **where in the process the case stopped**. No JSON on screen.
+- The application number and product must be **read from the documents**, not typed.
+- The owner approved each change below ("go") and then said "commit and push" for this work.
+
+### Implemented (all uncommitted)
+- `frontend.jsx`, `style.css`
+  - **Dashboard:** headline "AI recommends: send back to applicant" / "...ready for underwriting";
+    "N items missing before underwriting can continue"; missing items with impact tags
+    (critical → Blocks underwriting, major → Needs attention, minor → Please verify), quoted
+    evidence, "Found in" location, and an **AI follow-up** line read from
+    `proposal.gap_resolutions` (previously never shown); "Resolved by the AI agent" list; file
+    checklist (4 document types + `rules_checked` with ✓/✗). Buttons renamed only: approve →
+    "Send back to applicant" (or "Approve: ready for underwriting"), reject → "Overrule AI: mark
+    complete", modify → "Edit missing items". API actions are unchanged.
+  - **Intake:** documents only + "Analyze case". Application number / product inputs appear only
+    when `/analyze` returns 422 with `detail.needs`. Separate "Open case" lookup (`lookupId`).
+    `api()` now attaches `error.detail` for structured errors.
+  - **Audit trail:** `AuditView` + `caseSteps()` derive an 8-step process bar from the audit log
+    (latest `agent_proposal` plus the decision/execution events after it): Case received → AI
+    document review → Completeness check → AI follow-up → AI recommendation → Underwriter decision
+    → Applicant notified → Ready for underwriting. The current step is amber with "STOPPED HERE"
+    and waiting time; each step has plain-language details; re-reviews are compared with the
+    previous review. The raw JSON dump was removed entirely (owner: "JSON doesn't make sense").
+- `intake.py` (new): `detect_case_details(texts)`, deterministic regex only. ID from "Application
+  ID/No/Number", then "Ref", then an `APP_` pattern; product from "Product:" normalised to
+  `PRODUCT_RULES` keys. Conflicting IDs, missing values or unknown products return `None` plus a
+  plain message; it never guesses.
+- `models.py`: new `AnalyzeRequest` (optional `application_id` / `policy_product`) for the upload
+  endpoint. `ApplicationRequest` and everything the agent uses are unchanged.
+- `app.py`: `/analyze` takes `AnalyzeRequest`, reads PDF text with `agent._pypdf_pages`, fills a
+  missing ID/product from the documents (supplied values win), and returns
+  `422 {"message", "needs": [...]}` when detection fails. A packet with no text layer (scans only)
+  requires `application_id`; its product falls back to the previous default.
+- `rules.py`: **wording only** for five `error_message` strings: "Required field left blank",
+  "Application not signed or dated", "Age on the application doesn't match the medical records",
+  "Beneficiary details incomplete", "ID not valid". Rule IDs, logic, severities and
+  `RULES_VERSION` 1.0.0 are unchanged; `init_db()` upserts the new text; applicant letters reuse
+  these messages. The owner explicitly approved this despite the earlier "keep rules.py unchanged"
+  note.
+- `tests/test_intake.py` (new): 11 tests (detection, product spellings, conflicts, API round trip,
+  supplied ID wins, mixed packet → 422 needs, scan-only → 422 needs).
+- Line endings preserved (Python files CRLF, `frontend.jsx` / `style.css` LF).
+
+### Validation so far
+- Claude's Linux sandbox, fresh venv from `requirements.txt`: `pytest -q` → **124 passed,
+  1 skipped**. Not yet run in the owner's Windows `.venv`.
+- Frontend compiled with esbuild and rendered with mocked API data (Playwright): dashboard, intake
+  (normal and "needs" states), audit (waiting on underwriter; sent back to applicant).
+  **Not yet built with `npm run build` or tested against the live FastAPI/Ollama app.**
+
+### Next steps for Codex, in order
+1. `.venv/Scripts/python -m pytest -q`, then `npm run build`. Start uvicorn and analyze
+   `sample_data/APP_1001` **without typing an ID**. Check the dashboard, then each decision (send
+   back, overrule, edit), then the audit process bar after each. Also check the narrow layout.
+2. Update `README.md` (the `/analyze` ID/product are optional; the 422 `needs` contract; the new UI)
+   and the `AGENTS.md` file table if anything else changes.
+3. Commit and push the files above to `https://github.com/algoshank-pat/NIBO` (the owner said
+   "commit and push"). If `git status` also shows uncommitted gap-resolver extension files, confirm
+   with the owner first: the earlier October 23 note required separate approval for those.
+4. Investigate before the demo: the owner's screenshots showed APP_1001 proposals with 3 issues
+   (Oct 22) and 1 issue (Oct 23), and two different audit histories for APP_1001 (possibly
+   `nibo.db` vs `.ui-smoke.db` or a different `NIBO_DATABASE_PATH`). Explain both to the owner.
+
+### Environment notes
+- LangSmith tracing: the owner set `LANGSMITH_TRACING`, `LANGSMITH_API_KEY` and
+  `LANGSMITH_PROJECT=nibo` as PowerShell session variables before starting uvicorn. `config.py`
+  does not export `.env` values to `os.environ`, so LangSmith only sees real environment variables.
+  A local `.env` was created with PowerShell-style lines, which causes harmless python-dotenv
+  "could not parse statement" warnings. It is gitignored and **contains the API key: never print,
+  copy or commit it.** The first trace has not been confirmed yet.
+- LangSmith is a hosted service and traces include extracted document text. Synthetic data only;
+  the owner must decide before any real data is traced (it cuts against the local-only principle).
+- The owner switches between cmd and PowerShell. README commands are PowerShell.
+
+### Presentation (outside this folder, for the owner's reference)
+- `C:\Maven\Projects\Week3\NIBO_Maven_Presentation.pptx`: 5 slides, ivory/teal theme, business
+  language, about 5.5 minutes of speaker notes. Edit it in PowerPoint from here on.
+- Pending owner decisions: add a "Private by design" principle and security notes; clarify that
+  Deny (reject) marks the case READY; notes say "John Doe" but sample APP_1001 is **Jane Doe**;
+  slide 4 shows 2 issues (blank beneficiary + DOB mismatch) but the sample packet produces 1.
+  Align slide 4 with the live demo.
+
+## Codex takeover validation — October 23, 2026
+
+Windows validation: 126 tests pass; Vite production build succeeds. Automatic browser intake of all APP_1001 PDFs identified Jane Doe / TermLife_10yr without entered metadata and found one beneficiary issue. Approve was verified through the browser; reject and modify through live HTTP against an isolated mock database. Each produced three saved events; READY had no letter, NIBO had a stored letter.
+
+Corrected intake to detect conflicting IDs across label patterns. Corrected the audit so a stored letter does not imply applicant notification; staff sending remains pending. Removed preview wording implying automatic delivery. README documents the optional metadata and 422 needs response. The process bar is reconstructed from saved outcomes, not actual per-node telemetry.
+
+History investigation: nibo.db APP_1001 proposals each contain one beneficiary issue. .ui-smoke.db has an October 22 proposal with date_consistency, beneficiary_designated and id_valid, then an October 23 proposal with only beneficiary_designated. Different databases and stored proposal snapshots explain the differing displays; the cause of the older extraction differences was not established.
+
+Verification server: localhost:8001, mock extraction, tracing explicitly disabled, separate work/takeover-demo.db. Existing localhost:8000 process was preserved. LangSmith credentials were not printed or changed, and successful hosted tracing remains unverified.

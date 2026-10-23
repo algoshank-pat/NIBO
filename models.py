@@ -56,6 +56,15 @@ class GapResolutionContext(BaseModel):
     provider_npi: str | None = None
 
 
+class AnalyzeRequest(BaseModel):
+    """Portal upload. Application number and product are read from the documents when omitted."""
+    application_id: str | None = Field(default=None, min_length=1)
+    documents: list[DocumentInput]
+    resolution_context: GapResolutionContext = Field(default_factory=GapResolutionContext)
+    policy_product: str | None = None
+    applicant_age: int | None = None
+
+
 class ApplicationRequest(BaseModel):
     application_id: str = Field(min_length=1)
     documents: list[DocumentInput]

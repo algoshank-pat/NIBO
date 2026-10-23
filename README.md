@@ -35,7 +35,7 @@ FastAPI on port 8000. Rebuild with `npm run build` for FastAPI to serve the upda
 
 ## Review workflow
 
-1. Enter an application ID and product; choose the packet's PDFs; click **Analyze packet**.
+1. Choose the packet's PDFs and click **Analyze case**. The case number and product are read from document text; missing or conflicting details prompt for confirmation.
 2. Review the proposed status, evidence quotes, page locations, reasoning, and letter preview.
    The stored application status remains `PROPOSED`.
 3. Enter your underwriter name/ID and notes, then choose:
@@ -53,7 +53,7 @@ final issues/letter, while earlier proposals, decisions, and newly recorded lett
 
 ## API
 
-`POST /analyze` accepts an `ApplicationRequest`:
+`POST /analyze` accepts an `AnalyzeRequest`. The application ID and product are optional overrides; omitted values are detected from document text:
 
 ```json
 {
@@ -122,7 +122,7 @@ npm run build
 
 Tests are model-free (mock extractor / mocked Ollama HTTP), covering extraction, evidence,
 rules, API, database migration, human decisions, concurrency, rollback, and stored letters.
-The current suite has 114 tests. See `PERFORMANCE.md` for live model measurements, benchmark commands,
+The current suite has 126 tests. See `PERFORMANCE.md` for live model measurements, benchmark commands,
 and the remaining latency gap.
 Git setup and push to `https://github.com/algoshank-pat/NIBO` are authorized; deployment remains
 prohibited. `.gitignore` excludes local databases, PDF packets, raw benchmark logs, environments,
@@ -185,7 +185,7 @@ identified source; unverified candidates are excluded from the active rule input
 Responses add `gap_resolutions`, `resolved_issues_count`, `pending_issues_count`, and
 `unresolvable_issues_count`. Each resolution includes the original issue, method/status, timestamp,
 confidence, trace, returned data/evidence and simulation indicator. Counts appear in the existing
-portal summary; full attempts are visible in its audit record details. The final proposal and all
+portal summary and business-language audit follow-up details. The final proposal and all
 attempt records are serialized into the existing append-only `agent_proposal` audit snapshot when
 analysis is persisted, rather than introducing new database tables or standalone audit event types.
 Application status stays `PROPOSED` until the unchanged underwriter decision flow executes.
@@ -200,3 +200,9 @@ Run the focused PDF-to-resolution demonstration without Ollama, keys or real pro
 The integration test creates synthetic PDFs in a temporary directory, starts with an expired ID,
 retrieves an explicitly configured mock DMV record, verifies it with the deterministic rules,
 proposes READY, and checks the persisted proposal/audit while status remains PROPOSED.
+
+## Case intake and visual audit
+
+The dashboard leads with missing information, evidence and agent follow-up results. Use **Open case** to retrieve an existing review. The audit process bar summarizes the latest review and later human decision; it is reconstructed from saved events, not live node telemetry. Notification remains pending because letters are stored only and never sent.
+
+When document text cannot identify the case or product, `/analyze` returns HTTP 422 with `detail: {"message": "...", "needs": ["application_id", "policy_product"]}` (only missing fields are listed). Supply those fields and retry. Scan-only packets require a supplied case ID and use the existing default product unless overridden. Intake uses deterministic text matching; document classification/extraction still uses the configured extractor.

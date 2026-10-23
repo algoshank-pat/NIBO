@@ -323,19 +323,19 @@ def _rule(id, description, severity, error_message, docs, check) -> Rule:
 D = DocumentType
 RULES: dict[str, Rule] = {r.id: r for r in [
     _rule("required_fields", "All required fields on application must be filled (name, DOB, email, phone)",
-          "error", "Missing required field", [D.APPLICATION_FORM], check_required_fields),
+          "error", "Required field left blank", [D.APPLICATION_FORM], check_required_fields),
     _rule("signature_present", "Application must be signed and dated by applicant",
-          "error", "Signature or signature date missing", [D.APPLICATION_FORM], check_signature_present),
+          "error", "Application not signed or dated", [D.APPLICATION_FORM], check_signature_present),
     _rule("date_consistency", "Age on application must match medical records (within 1 year)",
-          "error", "Age mismatch between application and medical records",
+          "error", "Age on the application doesn't match the medical records",
           [D.APPLICATION_FORM, D.MEDICAL_RECORDS], check_date_consistency),
     _rule("medical_recency", f"Medical records must not be older than {settings.medical_recency_years} years",
           "warning", f"Medical records are older than {settings.medical_recency_years} years",
           [D.MEDICAL_RECORDS], check_medical_recency),
     _rule("beneficiary_designated", "Beneficiary must be named, with relationship and share > 0% (shares total 100%)",
-          "error", "Beneficiary not properly designated", [D.BENEFICIARY_FORM], check_beneficiary_designated),
+          "error", "Beneficiary details incomplete", [D.BENEFICIARY_FORM], check_beneficiary_designated),
     _rule("id_valid", "Valid, unexpired government ID provided (driver's license or passport)",
-          "error", "Invalid or expired ID document", [D.ID_DOCUMENT], check_id_valid),
+          "error", "ID not valid", [D.ID_DOCUMENT], check_id_valid),
 ]}
 
 # Which rules apply to which product. Seeded into the `rules` table by database.init_db().
