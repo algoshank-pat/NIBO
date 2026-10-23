@@ -486,6 +486,12 @@ function App() {
                 : "Follow the proposal, the human decision, and the recorded outcome."}
             </p>
           </div>
+          {proposal && (
+            <section className="case-number-banner" aria-label="Current application" role="status">
+              <span>Application number</span>
+              <strong>{record.application_id}</strong>
+            </section>
+          )}
           {error && (
             <div className="alert error" role="alert">
               {error}
